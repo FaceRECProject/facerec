@@ -10,7 +10,10 @@ import os
 import face_feature
 import time
 import dlib
+import math
+import random
 import numpy as np
+from datetime import *
 from PyQt5 import QtWidgets, QtCore, QtGui
 from main_window import Ui_widget
 from new_data import new_data
@@ -44,10 +47,24 @@ class FaceRec(QtWidgets.QWidget, Ui_widget):
         # self.savebtn.clicked.connect(self.newface)
         reflash = self.reflash
         reflash.clicked.connect(self.ui_reflash)
+        self.check()
         self.timer_camera.timeout.connect(self.show_camera)  # 计时结束调用show_camera()方法
 
     def ui_reflash(self):
         self.face_recognition()
+
+    def localtime(self):
+        self.dt = datetime.now()
+        self.t = self.dt.strftime('%Y-%m-%d %H:%M:%S')
+        self.day = self.dt.strftime('%Y%m%d')
+        self.date = self.dt.strftime('%x')
+        # self.curr_time = self.dt.time()
+        self.ym = self.dt.strftime('%Y%m')
+        self.mon = self.dt.strftime('%m')
+        self.defult_in = timedelta(hours=8)
+        self.defult_out = timedelta(hours=17)
+        self.defult_overtime = timedelta(hours=18)
+        self.curr_time = timedelta(hours=self.dt.hour,minutes=self.dt.minute,seconds=self.dt.second)
 
     def get_camera(self):
 
@@ -145,9 +162,48 @@ class FaceRec(QtWidgets.QWidget, Ui_widget):
             feature.append(0)
         return id,feature
 
+    def check(self):
+            if self.curr_time == timedelta(hours=16):
+                id = db.fetch_id()
+                for i in id:
+                    id_att = db.get_his(i,self.date)
+                    if id_att == []:
+                        no = i + '-' + self.day
+                        s_no = i + '-' + self.ym
+                        db.save_att(no,i,self.dt,self.date,abs='1')
+                        his = db.get_statistics(self.mon,i)
+                        abs_times = his[1] + str(1)
+                        db.statistics(i,s_no,self.mon,his[0],abs_times)
+                        break
+
+
+    def punch(self,id):
+        re_in = self.curr_time <= self.defult_in
+        re_out = self.curr_time >= self.defult_out
+        re_over = self.defult_overtime < self.curr_time
+        # index = random.randint(0,999999)
+        no = id + '-' + self.day
+        s_no = id + '-' + self.ym
+        if re_in == True:
+            # no = self.day + id
+            db.save_att(no,id,self.dt,self.date)
+        if re_in == False and re_out == False:
+            # no = self.day + id
+            late = str(math.ceil((self.curr_time-self.defult_in).seconds/3600))
+            db.save_att(no,id,self.dt,self.date,latetime=late)
+            val = db.get_statistics(self.mon,id)
+            late_times = val[0] + str(1)
+            db.statistics(id,s_no,self.mon,late_times,val[1])
+        if re_out == True and re_over == False:
+            db.save_att(no,id,self.dt,self.date)
+        if re_over == True:
+            over = int((self.curr_time-self.defult_overtime).seconds/3600)
+            db.save_att(no,id,self.dt,self.date,overtime=str(over))
+
+
     def face_recognition(self):
         id, feature = self.face_features()
-        print(id,feature)
+        # print(id,feature)
         if self.save_flag == 1 and id[0] != 0 and feature[0] != 0:
             similar_person_id = face_rec.Face_REC(self.image,self.faces[0],feature)
             if similar_person_id == 'unknow':
@@ -156,12 +212,16 @@ class FaceRec(QtWidgets.QWidget, Ui_widget):
             else:
                 try:
                     data = db.fetch_info(id[similar_person_id])
+                    # count = db.get_count(id[similar_person_id])
+                    statis = db.get_statistics(self.mon,id[similar_person_id])
                     print(data)
                     self.textEdit.setPlainText('\n\n  姓名：' + data[0][1] + '\n\n  性别：' + data[0][2] +
-                                                   '\n\n  工号：' + data[0][0] + '\n\n  部门：' + data[0][3])
+                                               '\n\n  工号：' + data[0][0] + '\n\n  部门：' + data[0][3] +
+                                               '\n\n  本月迟到：'+statis[0]+'次'+'  缺勤：'+statis[1]+'次')
                     pix = QtGui.QPixmap(self.photo_path+data[0][4])
                     self.label_photo.setPixmap(pix)
                     self.label_photo.setScaledContents(True)
+                    self.punch(id[similar_person_id])
                 except:
                         self.textEdit.setText('\n\n\n\n          请补全人员信息！')
 
@@ -182,6 +242,9 @@ class newdata(QtWidgets.QDialog, new_data):
         # self.user_path = 'data/user_data/user_info/'
         self.photo_path = 'photo/'
         self.tmp_path = 'tmp/'
+        self.dt = datetime.now()
+        self.ym = self.dt.strftime('%Y%m')
+        self.mon = self.dt.strftime('%m')
         self.lineEdit.editingFinished.connect(self.getname)
         self.lineEdit_2.editingFinished.connect(self.getnum)
         self.lineEdit_3.editingFinished.connect(self.getdepart)
@@ -211,7 +274,7 @@ class newdata(QtWidgets.QDialog, new_data):
         user_data = {'name': self.name, 'sex': self.sex, 'number': self.num, 'department': self.depart}
         # status_1 = 'ok'
         status_1 = db.save_info(user_data,self.name+'.jpg')
-        print(status_1)
+        # print(status_1)
         if status_1 == 'ok':
             print('ready')
             feature = face_feature.return_features_mean_personX(self.tmp_path)
@@ -222,11 +285,13 @@ class newdata(QtWidgets.QDialog, new_data):
                 status_2 = db.save_feature(self.num,feature)
                 if status_2 == 'ok':
                     os.rename(self.tmp_path + 'tmp.jpg', self.tmp_path + self.name + '.jpg')
-                    print('re ok')
+                    # print('re ok')
                     shutil.copy(self.tmp_path + self.name + '.jpg', self.photo_path)
-                    print('copy ok')
+                    # print('copy ok')
                     shutil.rmtree(self.tmp_path)
                     os.mkdir(self.tmp_path)
+                    no = self.num + '-' + self.ym
+                    db.statistics(self.num,no,self.mon)
                     self.info = QtWidgets.QMessageBox.information(self, '提示', '保存成功！请刷新页面！')
                     self.close()
                 else:
